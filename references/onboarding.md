@@ -1,5 +1,8 @@
 # 新服务器接入：一台服务器一个 PEM
 
+This branch is for Linux. For a native Windows OpenSSH target, use
+[windows.md](windows.md), including Windows key ACLs and `--platform windows`.
+
 ## 1. Establish authority and dependencies
 
 Obtain a unique lowercase target name, host/IP, SSH port, SSH user, network
@@ -8,13 +11,7 @@ console, KVM, cloud-init, or an existing administrator account. Do not scan for
 hosts.
 
 Ordinary control needs only Python 3 and OpenSSH on the controller and reachable
-sshd on Linux or OpenSSH Server on Windows. Do not require Tailscale, a cloud
-SDK, MCP, or `~/.ssh/config`.
-Windows 10/11 controllers are supported when `python`, `ssh`, and `ssh-keygen`
-are available in PowerShell. Their registry defaults to
-`%USERPROFILE%\.yun\targets.json`; Linux/macOS uses `~/.config/yun/targets.json`.
-This avoids Microsoft Store Python redirecting `%LOCALAPPDATA%` into a
-per-package cache.
+sshd on Linux. Do not require Tailscale, a cloud SDK, MCP, or `~/.ssh/config`.
 
 Initialize the external registry for first-time server onboarding:
 
@@ -34,10 +31,6 @@ This creates exactly:
 ~/.ssh/yun_TARGET_NAME.pem      # RSA-4096 private key in PEM encoding
 ~/.ssh/yun_TARGET_NAME.pem.pub  # public half installed on the server
 ```
-
-On Windows, `~` is the current user's profile directory, so these resolve under
-`%USERPROFILE%\.ssh`. The tool applies a private Windows ACL with `icacls` to
-the `.pem`; it does not rely on POSIX mode bits.
 
 The PEM is intentionally unencrypted so an authorized agent can use it without
 a password prompt, SSH agent, or secret-manager dependency. The tool applies
@@ -91,8 +84,6 @@ python scripts/yunctl.py register TARGET_NAME \
 Add `--role compute` only when remote Bash, tmux, and setsid jobs are authorized;
 add `--protected` for production/shared targets. `register` refuses a missing or
 non-PEM identity, missing known-hosts file, or fingerprint mismatch.
-Use `--platform windows` for a Windows OpenSSH Server target; Windows targets
-currently support only the `server` role.
 
 ## 6. Accept
 

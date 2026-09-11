@@ -52,37 +52,3 @@ jobs:
           test "$(stat -c %a "$key_root/yun_ci-worker.pem")" = "600"
           test "$(head -n 1 "$key_root/yun_ci-worker.pem")" = "-----BEGIN RSA PRIVATE KEY-----"
           ssh-keygen -lf "$key_root/yun_ci-worker.pem.pub" -E sha256
-
-  validate-windows:
-    runs-on: windows-latest
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.13"
-
-      - name: Compile and test control plane
-        shell: pwsh
-        run: |
-          python -m py_compile scripts/yunctl.py
-          python -m unittest discover -s tests -v
-          python scripts/yunctl.py --help
-
-      - name: Test Windows registry and key lifecycle
-        shell: pwsh
-        run: |
-          $registryRoot = Join-Path $env:RUNNER_TEMP ([guid]::NewGuid().ToString())
-          $env:YUN_TARGETS_FILE = Join-Path $registryRoot "targets.json"
-          python scripts/yunctl.py init
-          python scripts/yunctl.py init
-          if ((python scripts/yunctl.py targets) -ne "no targets registered") { throw "unexpected targets" }
-          if (-not (Test-Path -LiteralPath $env:YUN_TARGETS_FILE -PathType Leaf)) { throw "registry was not created" }
-          $keyRoot = Join-Path $registryRoot "keys"
-          python scripts/yunctl.py keygen ci-worker --directory $keyRoot
-          if (-not (Test-Path -LiteralPath (Join-Path $keyRoot "yun_ci-worker.pem") -PathType Leaf)) { throw "private key was not created" }
-          if (-not (Test-Path -LiteralPath (Join-Path $keyRoot "yun_ci-worker.pem.pub") -PathType Leaf)) { throw "public key was not created" }
-          ssh-keygen -lf (Join-Path $keyRoot "yun_ci-worker.pem.pub") -E sha256

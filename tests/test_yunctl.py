@@ -42,7 +42,6 @@ def target(*, protected: bool = False, roles: list[str] | None = None) -> dict:
         "protected": protected,
         "compute_backend": "tmux" if "compute" in selected_roles else None,
         "job_root": MODULE.JOB_ROOT if "compute" in selected_roles else None,
-        "platform": "linux",
     }
 
 
@@ -56,17 +55,6 @@ def synthetic_host_material(host: str = "host.example.invalid") -> tuple[str, st
 
 
 class RegistryTests(unittest.TestCase):
-    def test_default_registry_path_uses_platform_conventions(self) -> None:
-        home = Path("/home/yun-user")
-        self.assertEqual(
-            MODULE.default_registry_path(platform_name="posix", home=home),
-            home / ".config" / "yun" / "targets.json",
-        )
-        self.assertEqual(
-            MODULE.default_registry_path(platform_name="nt", home=home),
-            home / ".yun" / "targets.json",
-        )
-
     def test_registry_refuses_skill_internal_runtime_state(self) -> None:
         internal = MODULE.SKILL_ROOT / "targets.json"
         with mock.patch.dict(os.environ, {MODULE.REGISTRY_ENV: str(internal)}):
@@ -78,32 +66,12 @@ class RegistryTests(unittest.TestCase):
             path = Path(temporary) / "config" / "targets.json"
             with mock.patch.dict(os.environ, {MODULE.REGISTRY_ENV: str(path)}), mock.patch.object(
                 MODULE, "restrict_local_file"
-            ), mock.patch.object(MODULE, "legacy_windows_registry_path") as legacy:
+            ):
                 self.assertEqual(MODULE.main(["init"]), 0)
                 self.assertEqual(MODULE.main(["init"]), 0)
                 self.assertEqual(MODULE.load_registry(), {})
-            legacy.assert_not_called()
             self.assertEqual(
                 json.loads(path.read_text(encoding="utf-8")),
-                {"schema_version": 1, "targets": {}},
-            )
-
-    @unittest.skipUnless(os.name == "nt", "Windows registry migration")
-    def test_init_migrates_legacy_windows_registry(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            legacy = root / "legacy-local-app-data" / "yun" / "targets.json"
-            portable = root / "profile" / ".yun" / "targets.json"
-            legacy.parent.mkdir(parents=True)
-            legacy.write_text(
-                json.dumps({"schema_version": 1, "targets": {}}), encoding="utf-8"
-            )
-            with mock.patch.dict(os.environ, {"LOCALAPPDATA": str(legacy.parents[1])}), mock.patch.object(
-                MODULE, "DEFAULT_REGISTRY_PATH", portable
-            ), mock.patch.object(MODULE, "restrict_local_file"):
-                self.assertEqual(MODULE.main(["init"]), 0)
-            self.assertEqual(
-                json.loads(portable.read_text(encoding="utf-8")),
                 {"schema_version": 1, "targets": {}},
             )
 
@@ -244,51 +212,6 @@ class IdentityTests(unittest.TestCase):
         self.assertEqual(ssh_target, "yun-admin@host.example.invalid")
 
 
-class WindowsTargetTests(unittest.TestCase):
-    def windows_target(self) -> dict:
-        selected = target()
-        selected["platform"] = "windows"
-        return selected
-
-    def test_windows_target_rejects_linux_compute_backend(self) -> None:
-        selected = self.windows_target()
-        selected["roles"] = ["server", "compute"]
-        selected["compute_backend"] = "tmux"
-        selected["job_root"] = MODULE.JOB_ROOT
-        with self.assertRaisesRegex(MODULE.YunError, "scheduled-task"):
-            MODULE.validate_target("worker-one", selected)
-
-    def test_windows_remote_scripts_use_explicit_powershell(self) -> None:
-        selected = self.windows_target()
-        command = MODULE.prepare_remote_command(selected, "Write-Output 'ready'")
-        self.assertTrue(command.startswith("powershell.exe -NoLogo -NoProfile -NonInteractive"))
-        encoded = command.rsplit(" ", 1)[1]
-        self.assertEqual(base64.b64decode(encoded).decode("utf-16le"), "Write-Output 'ready'")
-
-    def test_windows_probe_and_exec_do_not_depend_on_default_shell(self) -> None:
-        selected = self.windows_target()
-        with mock.patch.object(MODULE, "verify_target", return_value=selected), mock.patch.object(
-            MODULE, "ssh_run", return_value=subprocess.CompletedProcess([], 0)
-        ) as run:
-            self.assertEqual(MODULE.cmd_probe(argparse.Namespace(target="worker-one", dry_run=True)), 0)
-            probe = run.call_args.args[1]
-            self.assertIn("Get-CimInstance Win32_OperatingSystem", probe)
-            self.assertEqual(
-                MODULE.cmd_exec(
-                    argparse.Namespace(
-                        target="worker-one",
-                        read_only=True,
-                        write=False,
-                        confirm_target=None,
-                        remote_command=["Get-Service", "sshd"],
-                        dry_run=True,
-                    )
-                ),
-                0,
-            )
-            self.assertEqual(run.call_args.args[1], "& 'Get-Service' 'sshd'")
-
-
 class BundleTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which("ssh-keygen"), "OpenSSH client is required")
     def test_bundle_then_import_rebuilds_empty_state_from_the_pem(self) -> None:
@@ -334,8 +257,6 @@ class BundleTests(unittest.TestCase):
                 bundle = MODULE.read_bundle_payload(identity)
                 self.assertEqual(bundle["name"], "worker-one")
                 self.assertEqual(bundle["known_hosts_line"], host_line)
-                self.assertEqual(bundle["schema_version"], 2)
-                self.assertEqual(bundle["connection"]["platform"], "linux")
 
             public_key.unlink()
             known_hosts.unlink()
@@ -365,7 +286,6 @@ class BundleTests(unittest.TestCase):
                     "user": "yun-admin",
                     "roles": ["server"],
                     "protected": False,
-                    "platform": "linux",
                 },
                 "known_hosts_line": host_line,
                 "host_key_sha256": host_fingerprint,
@@ -375,31 +295,6 @@ class BundleTests(unittest.TestCase):
             with mock.patch.dict(os.environ, {MODULE.REGISTRY_ENV: str(registry)}):
                 with self.assertRaisesRegex(MODULE.YunError, "does not match target"):
                     MODULE.validate_bundle_payload(payload, identity)
-
-    def test_v1_bundle_imports_as_linux(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            identity = Path(temporary) / "yun_worker-one.pem"
-            identity.touch()
-            host_line, host_fingerprint = synthetic_host_material()
-            payload = {
-                "schema_version": 1,
-                "name": "worker-one",
-                "connection": {
-                    "description": "test target",
-                    "hostname": "host.example.invalid",
-                    "port": 22,
-                    "user": "yun-admin",
-                    "roles": ["server"],
-                    "protected": False,
-                },
-                "known_hosts_line": host_line,
-                "host_key_sha256": host_fingerprint,
-                "client_key_sha256": FINGERPRINT,
-            }
-            registry = Path(temporary) / "runtime" / "targets.json"
-            with mock.patch.dict(os.environ, {MODULE.REGISTRY_ENV: str(registry)}):
-                _, imported, _ = MODULE.validate_bundle_payload(payload, identity)
-            self.assertEqual(imported["platform"], "linux")
 
     def test_bundle_metadata_rejects_unknown_fields(self) -> None:
         payload = {key: None for key in MODULE.BUNDLE_KEYS}
@@ -441,7 +336,6 @@ class BundleTests(unittest.TestCase):
                     "user": "yun-admin",
                     "roles": ["server"],
                     "protected": False,
-                    "platform": "linux",
                 },
                 "known_hosts_line": host_line,
                 "host_key_sha256": host_fingerprint,
@@ -480,7 +374,6 @@ class BundleTests(unittest.TestCase):
                     "user": "yun-admin",
                     "roles": ["server"],
                     "protected": False,
-                    "platform": "linux",
                 },
                 "known_hosts_line": host_line,
                 "host_key_sha256": host_fingerprint,
@@ -595,6 +488,26 @@ class PackageTests(unittest.TestCase):
         self.assertIn("self-describing", skill)
         self.assertIn('display_name: "云"', metadata)
         self.assertIn("allow_implicit_invocation: true", metadata)
+
+    def test_one_off_subdomain_prefers_manual_dashboard_cname_workflow(self) -> None:
+        root = MODULE_PATH.parents[1]
+        skill = (root / "SKILL.md").read_text(encoding="utf-8")
+        cloudflare = (root / "references" / "cloudflare.md").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("one-off subdomain", skill)
+        self.assertIn("manual dashboard CNAME", skill)
+        for required in (
+            "Preferred one-off subdomain workflow",
+            "<TUNNEL-UUID>.cfargotunnel.com",
+            "Tunnel ingress",
+            "public DNS",
+            "HTTPS",
+            "API health",
+            "rollback",
+        ):
+            self.assertIn(required, cloudflare)
 
 
 if __name__ == "__main__":

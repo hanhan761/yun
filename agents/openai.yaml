@@ -1,6 +1,6 @@
 interface:
   display_name: "云"
-  short_description: "只带 Skill 和自描述 PEM，安全控制 Linux/Windows"
-  default_prompt: "使用 $yun 导入或生成目标的自描述 PEM，连接已授权 Linux 服务器并验证结果。"
+  short_description: "用单个 PEM 安全控制 Linux 和 Windows，执行命令并传输文件"
+  default_prompt: "使用 $yun 连接已授权的 Linux 或 Windows 主机，按目标平台执行运维和文件传输，并验证结果。"
 policy:
   allow_implicit_invocation: true

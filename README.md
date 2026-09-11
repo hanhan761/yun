@@ -1,6 +1,12 @@
 # 云（`/yun`）
 
-一个可移交给其他 Codex 智能体使用的 Linux/Windows 服务器控制 Skill：每台服务器一个自描述 RSA-4096 PEM。换控制电脑时只携带 Skill 和 PEM，即可重建安全连接，进行 SSH 运维或提交、观察、取消、取回远程计算任务。
+一个可移交给其他 Codex 智能体使用的 Linux / Windows SSH 控制 Skill：每台主机一个自描述 RSA-4096 PEM。换控制电脑时只携带 Skill 和 PEM，即可重建安全连接。支持两种系统的日常运维和文件传输，以及 Linux 上的持久计算任务。
+
+Windows 接入见 [references/windows.md](references/windows.md)。登记时加
+`--platform windows --role server`，此后 `probe` 自动使用 PowerShell；
+`exec` 运行原生程序，`exec-script` 执行本地 UTF-8 `.ps1`，`upload` / `download`
+通过 SFTP 处理 `C:/...` 路径。原有 Linux PEM 可继续使用，无需重新生成。
+Windows 的 `tmux` 后台计算和远程桌面操作尚不支持。
 
 ![云 Skill：一台服务器一个 PEM 的完整流程](assets/yun-skill-flow.png)
 
@@ -13,30 +19,6 @@
 
 不需要携带原电脑的注册表、`known_hosts`、`.pub`、SSH config、SSH agent、MCP 或云厂商 SDK。`import-pem` 会从 PEM 重建注册表和严格 host-key cache；服务器端必须已经安装对应公钥，控制端仍需 Python 3、OpenSSH 和到服务器的网络可达性。
 
-## Windows 控制端
-
-Windows 10/11 可以作为控制端。Windows Server 2019+ 也可作为 `server` 目标，
-前提是已由目标端管理员配置 OpenSSH Server。请在控制端 PowerShell 中确认
-Python 3、Windows OpenSSH Client 的 `ssh` 和 `ssh-keygen` 都在 `PATH`：
-
-```powershell
-Get-Command python, ssh, ssh-keygen
-python scripts/yunctl.py --help
-```
-
-默认私钥仍位于 `%USERPROFILE%\.ssh`。运行时注册表在
-`%USERPROFILE%\.yun\targets.json`，而 Linux/macOS 继续使用
-`~/.config/yun/targets.json`。该位置避免 Microsoft Store Python 对
-`%LOCALAPPDATA%` 的按包重定向，因此不同 Python 安装会共用同一份状态。工具会
-以 `icacls` 收紧私钥和注册表 ACL；不要把 PEM 放在同步盘、共享目录或版本库中。
-从旧版本升级时，首次 `init` 会在新目录尚不存在的前提下迁移已验证的旧
-`%LOCALAPPDATA%\yun\targets.json`。
-
-Windows 目标使用显式 PowerShell，不依赖 OpenSSH 的默认 `cmd.exe` shell；支持
-`probe`、`exec`、`upload` 和 `download`。Windows 计算使用 Task Scheduler，
-Linux 计算继续使用 `bash`/`tmux`/`setsid` 后端。Windows 目标接入步骤见
-[references/windows.md](references/windows.md)。
-
 ## 换一台电脑
 
 安装 Skill，把 PEM 放在安全位置，然后执行：
@@ -45,9 +27,6 @@ Linux 计算继续使用 `bash`/`tmux`/`setsid` 后端。Windows 目标接入步
 python scripts/yunctl.py import-pem /absolute/path/yun_workstation.pem
 python scripts/yunctl.py probe workstation
 ```
-
-在 PowerShell 中请传入 Windows 绝对路径，例如
-`$HOME\.ssh\yun_workstation.pem`；其余命令不变。
 
 导入会完成以下检查：
 

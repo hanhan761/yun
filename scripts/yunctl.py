@@ -21,7 +21,7 @@ from typing import Any, Sequence
 
 SKILL_ROOT = pathlib.Path(__file__).resolve().parents[1]
 RUNNER_PATH = pathlib.Path(__file__).with_name("yun_job_runner.sh")
-WINDOWS_RUNNER_PATH = pathlib.Path(__file__).with_name("yun_job_runner.ps1")
+DEFAULT_REGISTRY_PATH = pathlib.Path.home() / ".config" / "yun" / "targets.json"
 REGISTRY_ENV = "YUN_TARGETS_FILE"
 JOB_ROOT = ".yun/jobs"
 JOB_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
@@ -29,9 +29,9 @@ TARGET_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$|^[a-z0-9]$"
 HOST_FINGERPRINT_PATTERN = re.compile(r"^SHA256:[A-Za-z0-9+/]{43}$")
 HOST_LABEL_PATTERN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
 SSH_USER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]{0,63}$")
+WINDOWS_USER_PATTERN = re.compile(r"^(?:[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}\\)?[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$")
 BUNDLE_PREFIX = b"# YUN-BUNDLE-V1 "
-BUNDLE_SCHEMA_VERSION = 2
-BUNDLE_SCHEMA_VERSIONS = {1, 2}
+BUNDLE_SCHEMA_VERSION = 1
 BUNDLE_MAX_HEADER_BYTES = 8192
 MAX_PRIVATE_KEY_BYTES = 1024 * 1024
 BUNDLE_KEYS = {
@@ -49,12 +49,10 @@ BUNDLE_CONNECTION_KEYS = {
     "user",
     "roles",
     "protected",
-    "platform",
 }
-LEGACY_BUNDLE_CONNECTION_KEYS = BUNDLE_CONNECTION_KEYS - {"platform"}
 ALLOWED_ROLES = {"server", "compute"}
-ALLOWED_PLATFORMS = {"linux", "windows"}
 ALLOWED_TARGET_KEYS = {
+    "platform",
     "description",
     "hostname",
     "port",
@@ -66,39 +64,11 @@ ALLOWED_TARGET_KEYS = {
     "protected",
     "compute_backend",
     "job_root",
-    "platform",
 }
 
 
 class YunError(RuntimeError):
     pass
-
-
-def default_registry_path(
-    *,
-    platform_name: str | None = None,
-    home: pathlib.Path | None = None,
-) -> pathlib.Path:
-    """Return a stable user-local location for runtime state."""
-    platform_name = os.name if platform_name is None else platform_name
-    home = pathlib.Path.home() if home is None else home
-    if platform_name == "nt":
-        # Microsoft Store Python virtualizes %LOCALAPPDATA% per package. Keep
-        # this shared control-plane state outside that virtualized location.
-        return home / ".yun" / "targets.json"
-    return home / ".config" / "yun" / "targets.json"
-
-
-DEFAULT_REGISTRY_PATH = default_registry_path()
-
-
-def legacy_windows_registry_path() -> pathlib.Path | None:
-    if os.name != "nt":
-        return None
-    local_app_data = os.environ.get("LOCALAPPDATA")
-    if not local_app_data:
-        return None
-    return (pathlib.Path(local_app_data) / "yun" / "targets.json").resolve()
 
 
 def printable(argv: Sequence[str]) -> str:
@@ -111,6 +81,7 @@ def run_external(
     capture: bool = False,
     dry_run: bool = False,
     display: str | None = None,
+    input_text: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     print(f"+ {display or printable(argv)}", file=sys.stderr)
     if dry_run:
@@ -123,6 +94,7 @@ def run_external(
             text=True,
             encoding="utf-8",
             errors="replace",
+            input=input_text,
         )
     except FileNotFoundError as exc:
         raise YunError(f"required command is missing: {argv[0]}") from exc
@@ -190,7 +162,11 @@ def validate_target(name: str, target: Any) -> dict[str, Any]:
         validate_hostname(str(target["hostname"]))
     except YunError as exc:
         raise YunError(f"target {name!r} has invalid hostname: {exc}") from exc
-    if not SSH_USER_PATTERN.fullmatch(str(target["user"])):
+    platform = target.get("platform", "linux")
+    if platform not in ("linux", "windows"):
+        raise YunError(f"target {name!r} has invalid platform")
+    user_pattern = WINDOWS_USER_PATTERN if platform == "windows" else SSH_USER_PATTERN
+    if not user_pattern.fullmatch(str(target["user"])):
         raise YunError(f"target {name!r} has invalid user")
     port = target.get("port")
     if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
@@ -218,14 +194,11 @@ def validate_target(name: str, target: Any) -> dict[str, Any]:
         or len(set(roles)) != len(roles)
     ):
         raise YunError(f"target {name!r} has invalid roles")
-    platform = target.get("platform", "linux")
-    if not isinstance(platform, str) or platform not in ALLOWED_PLATFORMS:
-        raise YunError(f"target {name!r} has invalid platform")
-    target["platform"] = platform
     if "compute" in roles:
-        backend = "scheduled-task" if platform == "windows" else "tmux"
-        if target.get("compute_backend") != backend or target.get("job_root") != JOB_ROOT:
-            raise YunError(f"target {name!r} compute contract must use {backend} and {JOB_ROOT}")
+        if platform == "windows":
+            raise YunError("Windows targets support server operations only; compute requires Linux tmux")
+        if target.get("compute_backend") != "tmux" or target.get("job_root") != JOB_ROOT:
+            raise YunError(f"target {name!r} compute contract must use tmux and {JOB_ROOT}")
     elif target.get("compute_backend") is not None or target.get("job_root") is not None:
         raise YunError(f"target {name!r} has compute fields without the compute role")
     return target
@@ -421,18 +394,16 @@ def read_bundle_payload(identity: pathlib.Path) -> dict[str, Any]:
 def validate_bundle_payload(
     payload: dict[str, Any], identity: pathlib.Path
 ) -> tuple[str, dict[str, Any], str]:
-    version = payload.get("schema_version")
-    if set(payload) != BUNDLE_KEYS or version not in BUNDLE_SCHEMA_VERSIONS:
+    if set(payload) != BUNDLE_KEYS or payload.get("schema_version") != BUNDLE_SCHEMA_VERSION:
         raise YunError("unsupported or malformed self-describing PEM schema")
     name = payload.get("name")
     if not isinstance(name, str):
         raise YunError("self-describing PEM requires a target name")
     validate_target_name(name)
     connection = payload.get("connection")
-    expected_connection_keys = (
-        LEGACY_BUNDLE_CONNECTION_KEYS if version == 1 else BUNDLE_CONNECTION_KEYS
-    )
-    if not isinstance(connection, dict) or set(connection) != expected_connection_keys:
+    if not isinstance(connection, dict) or not (
+        BUNDLE_CONNECTION_KEYS <= set(connection) <= BUNDLE_CONNECTION_KEYS | {"platform"}
+    ):
         raise YunError("self-describing PEM has malformed connection metadata")
     known_hosts_line = payload.get("known_hosts_line")
     if (
@@ -464,12 +435,11 @@ def validate_bundle_payload(
         "expected_host_key_sha256": host_fingerprint,
         "roles": roles,
         "protected": connection.get("protected"),
-        "compute_backend": (
-            "scheduled-task" if connection.get("platform") == "windows" else "tmux"
-        ) if isinstance(roles, list) and "compute" in roles else None,
+        "compute_backend": "tmux" if isinstance(roles, list) and "compute" in roles else None,
         "job_root": JOB_ROOT if isinstance(roles, list) and "compute" in roles else None,
-        "platform": connection.get("platform", "linux"),
     }
+    if "platform" in connection:
+        target["platform"] = connection["platform"]
     validate_target(name, target)
     resolved_connection_files(target, require_exists=False)
     fields = known_hosts_line.split()
@@ -515,13 +485,13 @@ def build_bundle_payload(name: str, target: dict[str, Any]) -> dict[str, Any]:
         "schema_version": BUNDLE_SCHEMA_VERSION,
         "name": name,
         "connection": {
+            **({"platform": target["platform"]} if "platform" in target else {}),
             "description": target["description"],
             "hostname": target["hostname"],
             "port": target["port"],
             "user": target["user"],
             "roles": target["roles"],
             "protected": target["protected"],
-            "platform": target["platform"],
         },
         "known_hosts_line": verified_host_key_line(target),
         "host_key_sha256": target["expected_host_key_sha256"],
@@ -671,20 +641,6 @@ def destination(target: dict[str, Any], *, scp: bool = False) -> str:
     return f"{target['user']}@{hostname}"
 
 
-def powershell_command(script: str) -> str:
-    encoded = base64.b64encode(script.encode("utf-16le")).decode("ascii")
-    return f"powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand {encoded}"
-
-
-def prepare_remote_command(target: dict[str, Any], script: str) -> str:
-    return powershell_command(script) if target["platform"] == "windows" else script
-
-
-def windows_exec_command(command: Sequence[str]) -> str:
-    quoted = ["'" + value.replace("'", "''") + "'" for value in command]
-    return "& " + " ".join(quoted)
-
-
 def scp_argv(target: dict[str, Any], *, recursive: bool = False) -> list[str]:
     argv = ["scp", *connection_options(target), "-P", str(target["port"])]
     if recursive:
@@ -700,7 +656,6 @@ def ssh_run(
     dry_run: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     remote = destination(target)
-    command = prepare_remote_command(target, remote_command)
     return run_external(
         [
             "ssh",
@@ -708,11 +663,28 @@ def ssh_run(
             "-p",
             str(target["port"]),
             remote,
-            command,
+            remote_command,
         ],
         capture=capture,
         dry_run=dry_run,
         display=f"ssh {remote}:{target['port']} <remote-command>",
+    )
+
+
+def ssh_interactive(target: dict[str, Any], remote_command: str) -> subprocess.CompletedProcess[str]:
+    """Run one user-facing, TTY-bound command through the pinned target path."""
+    remote = destination(target)
+    return run_external(
+        [
+            "ssh",
+            *connection_options(target),
+            "-tt",
+            "-p",
+            str(target["port"]),
+            remote,
+            remote_command,
+        ],
+        display=f"ssh {remote}:{target['port']} <interactive-authorized-command>",
     )
 
 
@@ -760,14 +732,6 @@ def cmd_init(args: argparse.Namespace) -> int:
         load_registry_payload()
         print(f"registry={path}")
         print("state=existing")
-        return 0
-    legacy = None if os.environ.get(REGISTRY_ENV) else legacy_windows_registry_path()
-    if legacy is not None and legacy != path and legacy.is_file():
-        payload = validate_registry(json.loads(legacy.read_text(encoding="utf-8")))
-        write_registry(payload, dry_run=args.dry_run)
-        print(f"registry={path}")
-        print(f"migrated_from={legacy}")
-        print("state=would-migrate" if args.dry_run else "state=migrated")
         return 0
     write_registry(empty_registry(), dry_run=args.dry_run)
     print(f"registry={path}")
@@ -820,12 +784,11 @@ def cmd_register(args: argparse.Namespace) -> int:
         "expected_host_key_sha256": args.host_fingerprint,
         "roles": roles,
         "protected": bool(args.protected),
-        "compute_backend": (
-            "scheduled-task" if getattr(args, "platform", "linux") == "windows" else "tmux"
-        ) if "compute" in roles else None,
+        "compute_backend": "tmux" if "compute" in roles else None,
         "job_root": JOB_ROOT if "compute" in roles else None,
-        "platform": getattr(args, "platform", "linux"),
     }
+    if getattr(args, "platform", "linux") == "windows":
+        target["platform"] = "windows"
     validate_target(name, target)
     if name in payload["targets"] and args.confirm_replace != name:
         raise YunError(f"replacing target requires --confirm-replace {name}")
@@ -982,9 +945,87 @@ def cmd_import_pem(args: argparse.Namespace) -> int:
     return 0
 
 
+def powershell_literal(value: str) -> str:
+    if "\x00" in value:
+        raise YunError("PowerShell arguments cannot contain NUL")
+    return "'" + value.replace("'", "''") + "'"
+
+
+def powershell_command(source: str) -> str:
+    # EncodedCommand survives both cmd.exe and PowerShell as the sshd default shell.
+    # Keep under cmd.exe's 8191-character command limit, including SSH shell overhead.
+    wrapped = """$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+$OutputEncoding = [Console]::OutputEncoding
+$global:LASTEXITCODE = 0
+try {
+""" + source + """
+exit $global:LASTEXITCODE
+} catch {
+[Console]::Error.WriteLine($_.Exception.Message)
+exit 1
+}
+"""
+    encoded = base64.b64encode(wrapped.encode("utf-16le")).decode("ascii")
+    command = "powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand " + encoded
+    if len(command) > 7500:
+        raise YunError("PowerShell command is too long; upload a .ps1 and exec powershell.exe -File PATH")
+    return command
+
+
+WINDOWS_PROBE = r"""
+$os = Get-CimInstance Win32_OperatingSystem
+$disk = Get-CimInstance Win32_LogicalDisk -Filter ("DeviceID='" + $env:SystemDrive + "'")
+if ($null -eq $disk) { throw 'System drive information unavailable' }
+$info = [ordered]@{
+    hostname = [Environment]::MachineName
+    user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    platform = 'windows'
+    kernel = $os.Caption + ' ' + $os.Version
+    uptime_seconds = [math]::Floor(((Get-Date) - $os.LastBootUpTime).TotalSeconds)
+    root_disk = [ordered]@{ drive = $env:SystemDrive; total_bytes = $disk.Size; free_bytes = $disk.FreeSpace }
+    memory = [ordered]@{ total_kib = $os.TotalVisibleMemorySize; free_kib = $os.FreePhysicalMemory }
+    scheduler = 'none'
+}
+'YUN_PROBE_OK'
+$info | ConvertTo-Json -Compress -Depth 3
+""".strip()
+
+
+def sftp_literal(path: str) -> str:
+    # Exactly one file: no globs, control characters, or embedded batch commands.
+    if not path or any(ord(c) < 32 for c in path) or any(c in path for c in '*?[]'):
+        raise YunError("SFTP requires a literal file path without globs or control characters")
+    return '"' + path.replace('\\', '\\\\').replace('"', '\\"') + '"'
+
+
+def windows_transfer(
+    target: dict[str, Any], local: pathlib.Path, remote: str, *, upload: bool, dry_run: bool
+) -> int:
+    remote = remote.replace('\\', '/')
+    if not re.match(r'^[A-Za-z]:/', remote) or remote.endswith('/') or any(
+        part in ('.', '..') for part in remote.split('/')
+    ) or ':' in remote[2:] or '"' in remote:
+        raise YunError("Windows remote file path must be absolute, e.g. C:/Users/name/result.json")
+    local_literal = sftp_literal(local.as_posix())
+    remote_literal = sftp_literal('/' + remote)
+    if not upload and not dry_run:
+        local.parent.mkdir(parents=True, exist_ok=True)
+    operation = f"put {local_literal} {remote_literal}" if upload else f"get {remote_literal} {local_literal}"
+    return run_external(
+        ["sftp", *connection_options(target), "-P", str(target['port']), "-b", "-", destination(target, scp=True)],
+        input_text=operation + "\nbye\n",
+        dry_run=dry_run,
+        display=f"sftp {destination(target)} <one-file-{'upload' if upload else 'download'}>",
+    ).returncode
+
+
 def cmd_probe(args: argparse.Namespace) -> int:
     target = verify_target(args.target)
-    linux_probe = r"""
+    if target.get("platform", "linux") == "windows":
+        return ssh_run(target, powershell_command(WINDOWS_PROBE), dry_run=args.dry_run).returncode
+    remote = r"""
 set -u
 printf 'YUN_PROBE_OK\n'
 printf 'hostname='; hostname
@@ -996,21 +1037,6 @@ printf 'memory='; LANG=C free -h | awk '/^Mem:/ {print $2","$3","$7}'
 printf 'scheduler='; if command -v tmux >/dev/null 2>&1 && command -v setsid >/dev/null 2>&1; then echo tmux; else echo none; fi
 printf 'gpu='; if command -v nvidia-smi >/dev/null 2>&1; then if gpu_info=$(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null); then printf '%s\n' "$gpu_info" | paste -sd';' -; else echo unavailable; fi; else echo none; fi
 """.strip()
-    windows_probe = r"""
-$ErrorActionPreference = 'Stop'
-Write-Output 'YUN_PROBE_OK'
-Write-Output ('hostname=' + $env:COMPUTERNAME)
-Write-Output ('user=' + [Security.Principal.WindowsIdentity]::GetCurrent().Name)
-$os = Get-CimInstance Win32_OperatingSystem
-Write-Output ('kernel=' + $os.Caption + ' ' + $os.Version)
-Write-Output ('uptime=' + ((Get-Date) - $os.LastBootUpTime).ToString())
-$disk = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:'"
-Write-Output ('root_disk=' + $disk.Size + ',' + $disk.Size - $disk.FreeSpace + ',' + $disk.FreeSpace)
-Write-Output ('memory=' + $os.TotalVisibleMemorySize + ',' + ($os.TotalVisibleMemorySize - $os.FreePhysicalMemory) + ',' + $os.FreePhysicalMemory)
-Write-Output 'scheduler=none'
-if (Get-Command nvidia-smi -ErrorAction SilentlyContinue) { Write-Output 'gpu=available' } else { Write-Output 'gpu=none' }
-""".strip()
-    remote = windows_probe if target["platform"] == "windows" else linux_probe
     return ssh_run(target, remote, dry_run=args.dry_run).returncode
 
 
@@ -1024,8 +1050,55 @@ def cmd_exec(args: argparse.Namespace) -> int:
         command.pop(0)
     if not command:
         raise YunError("remote command is required after --")
-    remote = windows_exec_command(command) if target["platform"] == "windows" else shlex.join(command)
+    if target.get("platform", "linux") == "windows":
+        # Native executable argv, never PowerShell source. Cmdlets/pipelines use exec-script.
+        remote = powershell_command(
+            "$yunStart = New-Object System.Diagnostics.ProcessStartInfo\n"
+            + "$yunStart.UseShellExecute = $false\n"
+            + "$yunStart.CreateNoWindow = $true\n"
+            + "$yunStart.FileName = " + powershell_literal(command[0]) + "\n"
+            + "$yunStart.Arguments = " + powershell_literal(subprocess.list2cmdline(command[1:])) + "\n"
+            + "$yunProcess = [System.Diagnostics.Process]::Start($yunStart)\n"
+            + "$yunProcess.WaitForExit()\nexit $yunProcess.ExitCode\n"
+        )
+    else:
+        remote = shlex.join(command)
     return ssh_run(target, remote, dry_run=args.dry_run).returncode
+
+
+def cmd_exec_script(args: argparse.Namespace) -> int:
+    target = verify_target(args.target)
+    require_role(target, "server")
+    if args.write:
+        require_protected_confirmation(args.target, target, args.confirm_target)
+    if target.get("platform", "linux") != "windows":
+        raise YunError("exec-script currently supports Windows PowerShell only")
+    script = pathlib.Path(args.script).expanduser().resolve()
+    if not script.is_file() or script.suffix.lower() != ".ps1":
+        raise YunError("exec-script requires an existing UTF-8 .ps1 file")
+    if script.stat().st_size > 2048:
+        raise YunError("inline script exceeds 2 KiB; upload it, then exec powershell.exe -File PATH")
+    try:
+        source = script.read_text(encoding="utf-8-sig")
+    except UnicodeError as exc:
+        raise YunError("PowerShell script must be UTF-8") from exc
+    return ssh_run(target, powershell_command(source), dry_run=args.dry_run).returncode
+
+
+def cmd_sudo_authorize(args: argparse.Namespace) -> int:
+    """Open a pinned terminal only for user-entered sudo credential caching.
+
+    No password is accepted as an argument, read by this process, written to a
+    file, or forwarded through stdin. This remains deliberately separate from
+    ``exec`` so that authorization never also executes a deployment command.
+    """
+    target = verify_target(args.target)
+    require_role(target, "server")
+    require_protected_confirmation(args.target, target, args.confirm_target)
+    if target.get("platform", "linux") == "windows":
+        raise YunError("sudo-authorize is Linux-only; use an authorized Windows account")
+    remote = "sudo -v && printf 'YUN_SUDO_AUTHORIZED\\n'"
+    return ssh_interactive(target, remote).returncode
 
 
 def valid_remote_path(value: str) -> str:
@@ -1042,6 +1115,8 @@ def cmd_upload(args: argparse.Namespace) -> int:
     if not local.is_file():
         raise YunError(f"local upload file is missing: {local}")
     remote = valid_remote_path(args.remote)
+    if target.get("platform", "linux") == "windows":
+        return windows_transfer(target, local, remote, upload=True, dry_run=args.dry_run)
     return run_external(
         [*scp_argv(target), str(local), f"{destination(target, scp=True)}:{remote}"],
         dry_run=args.dry_run,
@@ -1054,6 +1129,8 @@ def cmd_download(args: argparse.Namespace) -> int:
     require_role(target, "server")
     remote = valid_remote_path(args.remote)
     local_destination = pathlib.Path(args.local).expanduser().resolve()
+    if target.get("platform", "linux") == "windows":
+        return windows_transfer(target, local_destination, remote, upload=False, dry_run=args.dry_run)
     if not args.dry_run:
         local_destination.parent.mkdir(parents=True, exist_ok=True)
     return run_external(
@@ -1071,8 +1148,6 @@ def cmd_submit(args: argparse.Namespace) -> int:
     target = verify_target(args.target)
     require_role(target, "compute")
     require_protected_confirmation(args.target, target, args.confirm_target)
-    if target["platform"] == "windows":
-        return cmd_submit_windows(args, target)
     if target.get("compute_backend") != "tmux":
         raise YunError("this CLI submits only to registered tmux targets")
     script = pathlib.Path(args.script).expanduser().resolve()
@@ -1127,72 +1202,9 @@ tmux new-session -d -s "$session" "bash \"$root/runner.sh\" \"$root\""
     return 0
 
 
-def windows_job_root(job_id: str) -> str:
-    validate_job_id(job_id)
-    return f"$HOME/.yun/jobs/{job_id}"
-
-
-def windows_task_name(job_id: str) -> str:
-    validate_job_id(job_id)
-    return f"yun-{job_id}"
-
-
-def cmd_submit_windows(args: argparse.Namespace, target: dict[str, Any]) -> int:
-    if target.get("compute_backend") != "scheduled-task":
-        raise YunError("this CLI submits Windows jobs only to scheduled-task targets")
-    script = pathlib.Path(args.script).expanduser().resolve()
-    if not script.is_file() or script.suffix.lower() != ".ps1":
-        raise YunError("Windows jobs require an existing .ps1 script")
-    if script.stat().st_size > 10 * 1024 * 1024 or not WINDOWS_RUNNER_PATH.is_file():
-        raise YunError("Windows job input is invalid")
-    job_id = new_job_id(args.name or script.stem)
-    root = windows_job_root(job_id)
-    task = windows_task_name(job_id)
-    create = f"""$root = Join-Path $HOME '.yun\\jobs\\{job_id}'
-if (Test-Path -LiteralPath $root) {{ throw 'job already exists' }}
-New-Item -ItemType Directory -Force -Path (Join-Path $root 'results') | Out-Null
-"""
-    if ssh_run(target, create, dry_run=args.dry_run).returncode != 0:
-        return 1
-    for source, name in ((script, "job.ps1"), (WINDOWS_RUNNER_PATH, "runner.ps1")):
-        result = run_external([*scp_argv(target), str(source), f"{destination(target, scp=True)}:{root}/{name}"], dry_run=args.dry_run, display=f"scp <job-file> {destination(target, scp=True)}:<job-path>")
-        if result.returncode != 0:
-            return result.returncode
-    start = f"""$root = Join-Path $HOME '.yun\\jobs\\{job_id}'
-$task = '{task}'
-$runner = Join-Path $root 'runner.ps1'
-$arguments = '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $runner + '" -JobDir "' + $root + '"'
-$action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $arguments
-$trigger = New-ScheduledTaskTrigger -Once -At ((Get-Date).AddYears(1))
-$principal = New-ScheduledTaskPrincipal -UserId ([Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType S4U -RunLevel Limited
-Register-ScheduledTask -TaskName $task -TaskPath '\yun\' -Action $action -Trigger $trigger -Principal $principal -Force | Out-Null
-Start-ScheduledTask -TaskName $task -TaskPath '\yun\'
-"""
-    result = ssh_run(target, start, capture=True, dry_run=args.dry_run)
-    if result.returncode != 0:
-        if result.stderr:
-            print(result.stderr, file=sys.stderr, end="")
-        return result.returncode
-    print(job_id)
-    return 0
-
-
-def windows_job_status(target: dict[str, Any], job_id: str, dry_run: bool) -> int:
-    validate_job_id(job_id)
-    remote = f"""$root = Join-Path $HOME '.yun\\jobs\\{job_id}'
-if (-not (Test-Path $root)) {{ throw 'job missing' }}
-foreach ($field in @('status','started_at','finished_at','exit_code','child_pid')) {{ $path = Join-Path $root $field; if (Test-Path $path) {{ Write-Output ($field + '=' + (Get-Content $path -Raw).Trim()) }} }}
-$task = Get-ScheduledTask -TaskName 'yun-{job_id}' -TaskPath '\\yun\\' -ErrorAction SilentlyContinue
-Write-Output ('session=' + $(if ($task -and $task.State -eq 'Running') {{ 'running' }} else {{ 'absent' }}))
-Write-Output ('size=' + ((Get-ChildItem -LiteralPath $root -Recurse -Force | Measure-Object -Property Length -Sum).Sum))"""
-    return ssh_run(target, remote, dry_run=dry_run).returncode
-
-
 def cmd_status(args: argparse.Namespace) -> int:
     target = verify_target(args.target)
     require_role(target, "compute")
-    if target["platform"] == "windows":
-        return windows_job_status(target, args.job_id, args.dry_run)
     shell_path, _ = job_paths(target, args.job_id)
     session = f"yun-{args.job_id}"
     remote = f'''set -eu
@@ -1210,10 +1222,6 @@ printf 'size='; du -sh "$root" | awk '{{print $1}}'
 def cmd_jobs(args: argparse.Namespace) -> int:
     target = verify_target(args.target)
     require_role(target, "compute")
-    if target["platform"] == "windows":
-        remote = """$base = Join-Path $HOME '.yun\\jobs'
-if (Test-Path $base) { Get-ChildItem -LiteralPath $base -Directory | Where-Object { $_.Name -match '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$' } | Sort-Object Name | ForEach-Object { $status = if (Test-Path (Join-Path $_.FullName 'status')) { (Get-Content (Join-Path $_.FullName 'status') -Raw).Trim() } else { 'unknown' }; $started = if (Test-Path (Join-Path $_.FullName 'started_at')) { (Get-Content (Join-Path $_.FullName 'started_at') -Raw).Trim() } else { '-' }; Write-Output ($_.Name + "`t" + $status + "`t" + $started) } }"""
-        return ssh_run(target, remote, dry_run=args.dry_run).returncode
     remote = f'''set -eu
 base="$HOME/{JOB_ROOT}"
 test -d "$base" || exit 0
@@ -1230,17 +1238,6 @@ done
 def cmd_logs(args: argparse.Namespace) -> int:
     target = verify_target(args.target)
     require_role(target, "compute")
-    if target["platform"] == "windows":
-        root = windows_job_root(args.job_id)
-        lines = max(1, min(args.lines, 5000))
-        remote = f"""$root = Join-Path $HOME '.yun\\jobs\\{args.job_id}'
-if (-not (Test-Path $root)) {{ throw 'job missing' }}
-Write-Output '--- stdout ---'; if (Test-Path (Join-Path $root 'stdout.log')) {{ Get-Content (Join-Path $root 'stdout.log') -Tail {lines} }}
-Write-Output '--- stderr ---'; if (Test-Path (Join-Path $root 'stderr.log')) {{ Get-Content (Join-Path $root 'stderr.log') -Tail {lines} }}"""
-        result = ssh_run(target, remote, capture=True, dry_run=args.dry_run)
-        if result.stdout: print(redact(result.stdout), end="")
-        if result.stderr: print(redact(result.stderr), file=sys.stderr, end="")
-        return result.returncode
     shell_path, _ = job_paths(target, args.job_id)
     lines = max(1, min(args.lines, 5000))
     remote = f'''set -eu
@@ -1263,14 +1260,6 @@ def cmd_cancel(args: argparse.Namespace) -> int:
     target = verify_target(args.target)
     require_role(target, "compute")
     require_protected_confirmation(args.target, target, args.confirm_target)
-    if target["platform"] == "windows":
-        validate_job_id(args.job_id)
-        remote = f"""$root = Join-Path $HOME '.yun\\jobs\\{args.job_id}'
-if (-not (Test-Path $root)) {{ throw 'job missing' }}
-$status = if (Test-Path (Join-Path $root 'status')) {{ (Get-Content (Join-Path $root 'status') -Raw).Trim() }} else {{ 'unknown' }}
-if ($status -notin @('succeeded','failed','cancelled')) {{ New-Item -ItemType File -Force -Path (Join-Path $root 'cancel_requested') | Out-Null; Stop-ScheduledTask -TaskName 'yun-{args.job_id}' -TaskPath '\\yun\\' -ErrorAction SilentlyContinue; Set-Content -NoNewline -Path (Join-Path $root 'status') -Value 'cancelled'; Set-Content -NoNewline -Path (Join-Path $root 'finished_at') -Value ([DateTime]::UtcNow.ToString('o')); Set-Content -NoNewline -Path (Join-Path $root 'exit_code') -Value '143' }}
-Write-Output 'cancel_requested={args.job_id}'"""
-        return ssh_run(target, remote, dry_run=args.dry_run).returncode
     shell_path, _ = job_paths(target, args.job_id)
     session = f"yun-{args.job_id}"
     remote = f'''set -eu
@@ -1299,15 +1288,6 @@ printf 'cancel_requested=%s\n' {shlex.quote(args.job_id)}
 def cmd_fetch(args: argparse.Namespace) -> int:
     target = verify_target(args.target)
     require_role(target, "compute")
-    if target["platform"] == "windows":
-        validate_job_id(args.job_id)
-        check = ssh_run(target, f"$results = Join-Path $HOME '.yun\\jobs\\{args.job_id}\\results'; if (-not (Test-Path $results)) {{ throw 'results missing' }}", dry_run=args.dry_run)
-        if check.returncode != 0:
-            return check.returncode
-        local_destination = pathlib.Path(args.destination).expanduser().resolve() / args.job_id
-        if not args.dry_run:
-            local_destination.parent.mkdir(parents=True, exist_ok=True)
-        return run_external([*scp_argv(target, recursive=True), f"{destination(target, scp=True)}:$HOME/.yun/jobs/{args.job_id}/results", str(local_destination)], dry_run=args.dry_run, display=f"scp {destination(target, scp=True)}:<job-results> <local-dir>").returncode
     _, scp_path = job_paths(target, args.job_id)
     check = ssh_run(
         target,
@@ -1334,18 +1314,6 @@ def cmd_cleanup(args: argparse.Namespace) -> int:
     target = verify_target(args.target)
     require_role(target, "compute")
     require_protected_confirmation(args.target, target, args.confirm_target)
-    if target["platform"] == "windows":
-        if args.confirm_job != args.job_id:
-            raise YunError(f"cleanup requires --confirm-job {args.job_id}")
-        validate_job_id(args.job_id)
-        remote = f"""$root = Join-Path $HOME '.yun\\jobs\\{args.job_id}'
-if (-not (Test-Path $root)) {{ throw 'job missing' }}
-$state = (Get-Content (Join-Path $root 'status') -Raw).Trim()
-if ($state -notin @('succeeded','failed','cancelled')) {{ throw 'job is not terminal' }}
-Unregister-ScheduledTask -TaskName 'yun-{args.job_id}' -TaskPath '\\yun\\' -Confirm:$false -ErrorAction SilentlyContinue
-Remove-Item -LiteralPath $root -Recurse -Force
-Write-Output 'cleaned={args.job_id}'"""
-        return ssh_run(target, remote, dry_run=args.dry_run).returncode
     validate_job_id(args.job_id)
     if args.confirm_job != args.job_id:
         raise YunError(f"cleanup requires --confirm-job {args.job_id}")
@@ -1395,7 +1363,7 @@ def build_parser() -> argparse.ArgumentParser:
     register.add_argument("--host", required=True)
     register.add_argument("--port", type=int, default=22)
     register.add_argument("--user", required=True)
-    register.add_argument("--platform", choices=sorted(ALLOWED_PLATFORMS), default="linux")
+    register.add_argument("--platform", choices=("linux", "windows"), default="linux")
     register.add_argument("--pem")
     register.add_argument("--known-hosts")
     register.add_argument("--host-fingerprint", required=True)
@@ -1439,6 +1407,23 @@ def build_parser() -> argparse.ArgumentParser:
     add_protected_confirmation(execute)
     execute.add_argument("remote_command", nargs="+")
     execute.set_defaults(func=cmd_exec)
+
+    script = subparsers.add_parser("exec-script", help="run a bounded UTF-8 PowerShell script on Windows")
+    script.add_argument("target")
+    script.add_argument("script")
+    intent = script.add_mutually_exclusive_group(required=True)
+    intent.add_argument("--read-only", action="store_true")
+    intent.add_argument("--write", action="store_true")
+    add_protected_confirmation(script)
+    script.set_defaults(func=cmd_exec_script)
+
+    sudo_authorize = subparsers.add_parser(
+        "sudo-authorize",
+        help="open a pinned interactive terminal for user-entered sudo authorization",
+    )
+    sudo_authorize.add_argument("target")
+    add_protected_confirmation(sudo_authorize)
+    sudo_authorize.set_defaults(func=cmd_sudo_authorize)
 
     upload = subparsers.add_parser("upload", help="upload one bounded file")
     upload.add_argument("target")

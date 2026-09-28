@@ -2,13 +2,15 @@
 
 一个可移交给其他 Codex 智能体使用的 Linux / Windows SSH 控制 Skill：每台主机一个自描述 RSA-4096 PEM。换控制电脑时只携带 Skill 和 PEM，即可重建安全连接。支持两种系统的日常运维和文件传输、Linux 上的持久计算，以及“初始化文件夹”：本机开发代码，远端存储数据并运行任务。
 
+![Yun 示意图：本机开发，通过已验证连接使用远端存储与计算](assets/yun-workspace-hero.png)
+
+本机负责代码、配置和文档；指定主机承接数据、环境与计算。Yun 负责固定目标身份和连接。
+
 Windows 接入见 [references/windows.md](references/windows.md)。登记时加
 `--platform windows --role server`，此后 `probe` 自动使用 PowerShell；
 `exec` 运行原生程序，`exec-script` 执行本地 UTF-8 `.ps1`，`upload` / `download`
 通过 SFTP 处理 `C:/...` 路径。原有 Linux PEM 可继续使用，无需重新生成。
 Windows 的 `tmux` 后台计算和远程桌面操作尚不支持。
-
-![云 Skill：一台服务器一个 PEM 的完整流程](assets/yun-skill-flow.png)
 
 ## 两件套已经闭环
 
@@ -120,3 +122,9 @@ python -m unittest discover -s tests -v
 python -m py_compile scripts/yunctl.py
 python -m py_compile scripts/yun_workspace.py
 ```
+
+## PEM 与 Linux 接入原理图
+
+下面的原理图以 Linux 目标为例，展开首次接入、PEM 携带、主机指纹固定，以及换控制电脑后的连接与任务流程。
+
+![云 Skill 的完整连接原理图：一台服务器一个 PEM](assets/yun-skill-flow.png)

@@ -72,6 +72,24 @@ python scripts/yunctl.py bundle-pem my-server
 
 完整接入见 [references/onboarding.md](references/onboarding.md)，普通运维见 [references/servers.md](references/servers.md)，持久计算闭环见 [references/compute.md](references/compute.md)。
 
+## 初始化文件夹
+
+对 Agent 说“用 yun 初始化这里的文件夹”，“这里”指当前项目目录；它会先检查
+该目录现有配置和约束，再决定空目录初始化或已有项目接入。
+
+指定已登记、同时具备 `server` 和 `compute` 角色的 Linux 目标及远端项目根目录：
+
+```powershell
+python scripts/yun_workspace.py init C:\path\to\project --target linux-new --remote-root /data/my-project --confirm-target linux-new
+python scripts/yun_workspace.py sync C:\path\to\project --confirm-target linux-new --dry-run
+python scripts/yun_workspace.py sync C:\path\to\project --confirm-target linux-new
+```
+
+空文件夹会得到最小的工作区配置和开发约定。已有项目只补充缺失文件，不覆盖现有
+`AGENTS.md`、`.gitignore`、源码或数据。同步只发布有界源码，返回远端不可变版本；
+数据迁移和远端环境准备按项目需要单独进行。详见
+[references/workspace.md](references/workspace.md)。
+
 ## 安全边界
 
 - 自描述头只包含公开连接事实；RSA 私钥正文不会进入 Skill、注册表、日志或 Git。

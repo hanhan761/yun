@@ -1,6 +1,6 @@
 ---
 name: yun
-description: Connect and operate authorized Linux and Windows SSH hosts from one self-describing RSA PEM per target, with pinned host identity, bounded file transfers, Windows PowerShell execution, Linux durable compute, safe production deployment, and authorized Cloudflare DNS. Use when the user invokes /yun, $yun, yunskills, or yun技能, names 3090, 4090, 工作站, or 服务器 as a remote target, supplies a yun_*.pem, or requests remote host control, onboarding, synchronization, deployment, or computation.
+description: Connect and operate authorized Linux and Windows SSH hosts from one self-describing RSA PEM per target, with pinned host identity, 初始化文件夹 (initialize the current folder for local coding and remote storage/compute), bounded source releases, file transfers, durable compute, safe production deployment, and authorized Cloudflare DNS. Use when the user invokes /yun, $yun, yunskills, or yun技能, says “用 yun 初始化这里/这个文件夹” or “把这里的存储和计算交给 yun”, names 3090, 4090, 工作站, or 服务器 as a remote target, supplies a yun_*.pem, or requests remote host control, onboarding, synchronization, deployment, or computation.
 ---
 
 # 云
@@ -80,6 +80,25 @@ submit → status/logs → fetch or cancel → cleanup lifecycle.
 Complete a job only after observing a terminal state and exit code, reviewing a
 redacted log summary, and fetching or verifying every requested result. A job
 ID proves submission, not completion.
+
+## 初始化文件夹
+
+Treat “用 yun 初始化文件夹”, “用 yun 初始化这里”, and requests to put this
+folder's storage and compute on yun as this feature. “这里” means the current
+working directory in the user's project, not this Skill's directory. First
+inspect that directory, its `AGENTS.md`, and any `.yun-workspace.json`; reuse
+an unambiguous target and remote root recorded for this project. Do not copy
+either value from a different project.
+
+Read [references/workspace.md](references/workspace.md). Use
+`scripts/yun_workspace.py` for initial setup and bounded source releases. An
+empty folder gets minimal project guidance; an existing project keeps its
+files and instructions. Inspect existing project rules before reconciling
+their storage and compute paths. The workspace helper currently requires one
+registered Linux target with both `server` and `compute` roles. Do not infer a
+missing target or remote root; ask only for a value that the request and this
+project cannot establish. Initialization does not authorize migration or
+deletion of existing local data.
 
 ## Server branch
 

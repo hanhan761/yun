@@ -1,6 +1,6 @@
 # 云（`/yun`）
 
-一个可移交给其他 Codex 智能体使用的 Linux / Windows SSH 控制 Skill：每台主机一个自描述 RSA-4096 PEM。换控制电脑时只携带 Skill 和 PEM，即可重建安全连接。支持两种系统的日常运维和文件传输，以及 Linux 上的持久计算任务。
+一个可移交给其他 Codex 智能体使用的 Linux / Windows SSH 控制 Skill：每台主机一个自描述 RSA-4096 PEM。换控制电脑时只携带 Skill 和 PEM，即可重建安全连接。支持两种系统的日常运维和文件传输、Linux 上的持久计算，以及“初始化文件夹”：本机开发代码，远端存储数据并运行任务。
 
 Windows 接入见 [references/windows.md](references/windows.md)。登记时加
 `--platform windows --role server`，此后 `probe` 自动使用 PowerShell；
@@ -74,21 +74,38 @@ python scripts/yunctl.py bundle-pem my-server
 
 ## 初始化文件夹
 
-对 Agent 说“用 yun 初始化这里的文件夹”，“这里”指当前项目目录；它会先检查
-该目录现有配置和约束，再决定空目录初始化或已有项目接入。
+对 Agent 说“用 yun 初始化这里的文件夹”，或“把这里的存储和计算交给 yun”。
+“这里”指当前项目目录。Agent 会先检查现有文件和项目约束；如果项目尚未指定
+目标服务器或远端根目录，再询问缺少的值。不会借用另一个项目的路径。
 
-指定已登记、同时具备 `server` 和 `compute` 角色的 Linux 目标及远端项目根目录：
+目前需要一个已登记、同时具备 `server` 和 `compute` 角色的 **Linux** 目标。
+`yunctl.py init` 只建立本机目标登记表；项目文件夹由 `yun_workspace.py init`
+处理。下面的 CLI 命令在 **yun Skill 根目录**执行，将示例路径换成待处理项目
+的绝对路径：
 
 ```powershell
-python scripts/yun_workspace.py init C:\path\to\project --target linux-new --remote-root /data/my-project --confirm-target linux-new
-python scripts/yun_workspace.py sync C:\path\to\project --confirm-target linux-new --dry-run
-python scripts/yun_workspace.py sync C:\path\to\project --confirm-target linux-new
+python scripts/yun_workspace.py init "C:\path\to\project" --target linux-new --remote-root /data/my-project --dry-run
+python scripts/yun_workspace.py init "C:\path\to\project" --target linux-new --remote-root /data/my-project --confirm-target linux-new
+python scripts/yun_workspace.py sync "C:\path\to\project" --dry-run
+python scripts/yun_workspace.py sync "C:\path\to\project" --confirm-target linux-new
 ```
 
-空文件夹会得到最小的工作区配置和开发约定。已有项目只补充缺失文件，不覆盖现有
-`AGENTS.md`、`.gitignore`、源码或数据。同步只发布有界源码，返回远端不可变版本；
-数据迁移和远端环境准备按项目需要单独进行。详见
-[references/workspace.md](references/workspace.md)。
+| 文件夹状态 | 初始化后的处理 |
+| --- | --- |
+| 空目录 | 生成 `.yun-workspace.json`、`YUN_WORKSPACE.md`、`AGENTS.md` 和基础 `.gitignore`。 |
+| 已有项目 | 补充缺失的配置和说明；保留原有 `AGENTS.md`、`.gitignore`、源码和数据。已有配置冲突时停止，交由 Agent 核对。 |
+
+正常初始化会先探测目标，再准备远端 `data/`、`runs/`、`cache/`、`envs/` 和
+`workspace/`。只想先建立本地配置，可加 `--local-only`，以后用同一条初始化命令
+准备远端。初始化不会自动搬迁已有数据，也不会删除本机副本。
+
+日常同步只发布有界源码：Git 项目采用已跟踪文件的当前内容，非 Git 项目扫描
+目录；常见密钥、`.env`、数据和权重会被排除，单文件上限为 20 MiB，总量上限为
+250 MiB。先用 `sync --dry-run` 核对文件清单。成功发布会返回不可变的远端
+`workspace/releases/RELEASE_ID` 路径；计算任务应固定使用该版本，并将大结果写在
+远端 `runs/`。已有数据的迁移和项目专用环境仍需按项目情况单独处理。
+
+详细流程见 [references/workspace.md](references/workspace.md)。
 
 ## 安全边界
 
@@ -101,4 +118,5 @@ python scripts/yun_workspace.py sync C:\path\to\project --confirm-target linux-n
 ```bash
 python -m unittest discover -s tests -v
 python -m py_compile scripts/yunctl.py
+python -m py_compile scripts/yun_workspace.py
 ```

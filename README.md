@@ -12,6 +12,12 @@ Windows 接入见 [references/windows.md](references/windows.md)。登记时加
 通过 SFTP 处理 `C:/...` 路径。原有 Linux PEM 可继续使用，无需重新生成。
 Windows 的 `tmux` 后台计算和远程桌面操作尚不支持。
 
+## 天河超算与私有配置
+
+支持经身份固定的 Tianhe/aTrust 密码会话、只读预检和队列检查，以及经过确认和脚本 SHA256 校验的 PEM 路线站点提交。具体账号、地址、指纹、密码和现有作业信息由用户各自保存在本机，不随此仓库分享；密码会话本身不执行提交。详见 [天河连接](references/tianhe-connection.md)、[作业验收](references/tianhe-dft.md)与[接入诊断](references/tianhe-access-recovery.md)。
+
+公开版将账号、地址和云端接口改为本机配置；个性化安装中的旧 DPAPI 密文不自动迁移，需在用户授权下重新登记。私人项目档案、历史作业及特定科学方法不包含在公开包中，应从各自项目获取。
+
 ## 两件套已经闭环
 
 | 携带物 | 作用 |

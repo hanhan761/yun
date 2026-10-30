@@ -30,6 +30,13 @@ jobs:
           python scripts/yunctl.py --help
           bash -n scripts/yun_job_runner.sh
 
+      - name: Test Tianhe and cloud adapters without credentials
+        run: |
+          export LOCALAPPDATA="$RUNNER_TEMP/yun-test-localappdata"
+          mkdir -p "$LOCALAPPDATA"
+          python -m unittest discover -s scripts -p 'test_*.py' -v
+          node --test scripts/test_yun_aliyun.cjs
+
       - name: Test isolated registry lifecycle
         run: |
           registry_root=$(mktemp -d)

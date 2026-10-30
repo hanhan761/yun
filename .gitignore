@@ -29,3 +29,13 @@ local/
 task_plan.md
 findings.md
 progress.md
+
+# Encrypted credentials and local HPC identity/configuration stay private.
+*.dpapi
+*.pfx
+*.p12
+tianhe*-profile*.json
+query-observers.json
+private-tianhe/
+*tianhe*-password.json
+*credential*.json

@@ -52,7 +52,7 @@ requested, complete its normal setup without asking for redundant permission.
    python scripts/yunctl.py bundle-pem win-pc --confirm-target win-pc
    ```
 
-   `--user` accepts ASCII local names, numeric names such as `13081`, and
+   `--user` accepts ASCII local names, numeric names such as `10001`, and
    `contoso\alice`. Use the verified local/domain account name; Microsoft Entra
    accounts are not supported by Windows OpenSSH key authentication. Do not
    substitute a different account without the user's direction.
@@ -73,8 +73,8 @@ python scripts/yunctl.py probe win-pc
 python scripts/yunctl.py exec win-pc --read-only -- whoami.exe
 python scripts/yunctl.py exec-script win-pc ./inspect.ps1 --read-only
 python scripts/yunctl.py exec-script win-pc ./change.ps1 --write --confirm-target win-pc
-python scripts/yunctl.py upload win-pc ./artifact.zip C:/Users/13081/artifact.zip --confirm-target win-pc
-python scripts/yunctl.py download win-pc C:/Users/13081/result.json ./downloads/result.json
+python scripts/yunctl.py upload win-pc ./artifact.zip C:/Users/10001/artifact.zip --confirm-target win-pc
+python scripts/yunctl.py download win-pc C:/Users/10001/result.json ./downloads/result.json
 ```
 
 `probe` prints `YUN_PROBE_OK` after its required checks, then a JSON record of

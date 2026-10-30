@@ -17,7 +17,7 @@ from test_yunctl import MODULE as yun, target, synthetic_host_material, FINGERPR
 
 def windows_target(**kwargs):
     value = target(**kwargs)
-    value.update(platform="windows", user="13081")
+    value.update(platform="windows", user="10001")
     return value
 
 
@@ -42,7 +42,7 @@ class WindowsContractTests(unittest.TestCase):
                 self.assertEqual(yun.main(["import-pem", str(pem)]), 0)
                 self.assertEqual(yun.verify_target("win")["platform"], "windows")
     def test_platform_user_and_compute_validation(self):
-        for user in ("13081", "yun-admin", "contoso\\alice"):
+        for user in ("10001", "yun-admin", "contoso\\alice"):
             value = windows_target()
             value["user"] = user
             self.assertEqual(yun.validate_target("win", value), value)
@@ -72,7 +72,7 @@ class WindowsContractTests(unittest.TestCase):
     def test_register_windows_then_read_registry(self):
         with tempfile.TemporaryDirectory() as temporary, mock.patch.dict(os.environ, {yun.REGISTRY_ENV: str(Path(temporary) / "targets.json")}), mock.patch.object(yun, "restrict_local_file"), mock.patch.object(yun, "verify_target_payload", side_effect=lambda name, value: value):
             self.assertEqual(yun.main(["init"]), 0)
-            self.assertEqual(yun.main(["register", "win", "--host", "host.example.invalid", "--user", "13081", "--platform", "windows", "--host-fingerprint", FINGERPRINT, "--role", "server"]), 0)
+            self.assertEqual(yun.main(["register", "win", "--host", "host.example.invalid", "--user", "10001", "--platform", "windows", "--host-fingerprint", FINGERPRINT, "--role", "server"]), 0)
             self.assertEqual(yun.get_target("win")["platform"], "windows")
 
     def test_windows_exec_requires_confirmation_before_launch(self):
@@ -90,14 +90,14 @@ class WindowsContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             local = Path(temporary) / "some 中文 file.txt"
             with mock.patch.object(yun, "resolved_connection_files", return_value=files), mock.patch.object(yun, "run_external", return_value=subprocess.CompletedProcess([], 0)) as run:
-                self.assertEqual(yun.windows_transfer(value, local, r"C:\Users\13081\some 中文 file.txt", upload=True, dry_run=True), 0)
+                self.assertEqual(yun.windows_transfer(value, local, r"C:\Users\10001\some 中文 file.txt", upload=True, dry_run=True), 0)
             argv = run.call_args.args[0]
             self.assertEqual(argv[0], "sftp")
             self.assertIn("StrictHostKeyChecking=yes", argv)
             self.assertIn("IdentityAgent=none", argv)
             batch = run.call_args.kwargs["input_text"]
             self.assertEqual(batch.count("\n"), 2)
-            self.assertIn('"/C:/Users/13081/some 中文 file.txt"', batch)
+            self.assertIn('"/C:/Users/10001/some 中文 file.txt"', batch)
             for invalid in ("C:relative.txt", "C:/../file", "C:/x\nrm *", "C:/x*", "C:/dir/", "C:/x:stream", "C:/x[1]"):
                 with self.subTest(path=invalid), self.assertRaises(yun.YunError):
                     yun.windows_transfer(value, local, invalid, upload=False, dry_run=True)

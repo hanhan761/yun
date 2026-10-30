@@ -489,15 +489,15 @@ class PackageTests(unittest.TestCase):
         self.assertIn('display_name: "云"', metadata)
         self.assertIn("allow_implicit_invocation: true", metadata)
 
-    def test_one_off_subdomain_prefers_manual_dashboard_cname_workflow(self) -> None:
+    def test_cloudflare_prefers_official_connection_with_manual_fallback(self) -> None:
         root = MODULE_PATH.parents[1]
         skill = (root / "SKILL.md").read_text(encoding="utf-8")
         cloudflare = (root / "references" / "cloudflare.md").read_text(
             encoding="utf-8"
         )
 
-        self.assertIn("one-off subdomain", skill)
-        self.assertIn("manual dashboard CNAME", skill)
+        self.assertIn("Cloudflare official MCP connection", skill)
+        self.assertIn("manual dashboard CNAME", cloudflare)
         for required in (
             "Preferred one-off subdomain workflow",
             "<TUNNEL-UUID>.cfargotunnel.com",

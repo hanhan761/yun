@@ -1,6 +1,6 @@
 ---
 name: yun
-description: Connect and operate authorized Linux and Windows SSH hosts from one self-describing RSA PEM per target, with pinned host identity, 初始化文件夹 (initialize the current folder for local coding and remote storage/compute), bounded source releases, file transfers, durable compute, safe production deployment, and authorized Cloudflare DNS. Use when the user invokes /yun, $yun, yunskills, or yun技能, says “用 yun 初始化这里/这个文件夹” or “把这里的存储和计算交给 yun”, names 3090, 4090, 工作站, or 服务器 as a remote target, supplies a yun_*.pem, or requests remote host control, onboarding, synchronization, deployment, or computation.
+description: Connect and operate authorized Linux and Windows SSH hosts from one self-describing RSA PEM per target, with pinned host identity, 初始化文件夹 (initialize the current folder for local coding and remote storage/compute), bounded source releases, file transfers, durable compute, safe production deployment, and authorized Cloudflare platform and Alibaba Cloud domain/DNS, ICP, and OPC workflows. Includes the verified Tianhe/aTrust password route; “yunskills超算” or “yunskills 超算” selects tianhe-ln5. Use when the user invokes /yun, $yun, yunskills, or yun技能, says “用 yun 初始化这里/这个文件夹” or “把这里的存储和计算交给 yun”, names 3090, 4090, 工作站, 服务器, 加油站, or 天河超算 as a remote target, supplies a yun_*.pem, or requests remote host control, onboarding, synchronization, deployment, computation, Cloudflare management, Alibaba Cloud DNS/ICP, or OPC.
 ---
 
 # 云
@@ -9,36 +9,42 @@ Use the bundled control plane. Treat a `YUN-BUNDLE-V1` PEM as the portable sourc
 of truth and the user-local registry/known-hosts files as reproducible cache.
 Never reconstruct a private connection from conversation history.
 
-## 用户常用机器名称
+## Target selection
 
-Resolve the user's machine name using this user-approved mapping before selecting
-a target. These are conversational aliases; keep the existing registry IDs and
-PEM filenames. Obtain all connection details from the registered target or its
-validated PEM, never from an alias or an inferred GPU/network address.
+Resolve user-provided machine aliases from the current project and the local registered targets. Never infer a network address or reuse an alias from a different user. A named target selects the machine, not extra write or deployment authority; if no unambiguous target exists, ask for the missing target.
 
-| 用户称呼 | 登记目标 ID |
-| --- | --- |
-| `3090`、`3090电脑`、`3090工作站` | `linux-new` |
-| `4090`、`4090工作站`、`工作站` | `workstation` |
-| `服务器`、`云服务器` | `wenshanzhike-edge` |
+## Execution location and Windows controller windows
 
-- A specific number takes precedence over a generic noun: `3090工作站` means
-  `linux-new`, while `工作站` alone means `workstation`.
-- Accept the registered IDs as well. Use the resolved ID in every CLI target
-  argument, including `--confirm-target`; describe the machine to the user by
-  their familiar name.
-- When the user names one machine, select and probe only that machine, then
-  perform the requested task without asking them to confirm the mapping.
-  If it is absent or unreachable, report that target's problem; do not switch
-  to another machine. If multiple machines are explicitly requested, follow
-  the requested scope for each.
-- For a follow-up that omits the machine name, retain the unambiguous active
-  target. If there is no unambiguous target, ask only which machine to use.
-- Names select the machine, not additional authority or capabilities. Preserve
-  its registered roles, protection, and workload restrictions; in particular,
-  do not deploy or proxy MatterSwarm on `wenshanzhike-edge`.
+- Establish where the task runs before launching compute. Use the user's explicit
+  machine choice or an unambiguous project/active-task target; state that location.
+  If neither establishes a location, ask which machine to use before starting.
+  Do not silently run remote-intended workloads on the local computer.
+- On Windows, unattended controller operations must not show PowerShell, CMD,
+  SSH, Python, or other console windows. Prefer `node_repl` file APIs and spawn
+  children with `windowsHide: true`, captured output, and no interactive terminal.
+  When PowerShell is needed, use `-NoProfile -NonInteractive -WindowStyle Hidden`.
+  Python children require `subprocess.CREATE_NO_WINDOW`; Start-Process requires
+  `-WindowStyle Hidden`. Avoid direct shell-tool calls that flash outer windows.
+- Preserve all registry, PEM, account, and pinned-host verification. Never bypass
+  identity checks to hide windows. Windows system OpenSSH was observed to exit 255
+  under console-free spawn on this controller; the project's `yun_hidden.py`
+  selects the installed Git OpenSSH binaries with the same validated connection
+  arguments and captures/forwards output. Do not modify global yun execution code
+  or add window watchdogs. Do not terminate unrelated terminals.
+
+## 天河超算入口
+
+当用户选择天河/aTrust + yhbatch 路线时，读取 [天河连接手册](references/tianhe-connection.md) 和 [超算作业流程](references/tianhe-dft.md)。目标、地址、账号和主机指纹必须来自用户本机经确认的 profile；公开 Skill 不包含任何人的实际连接资料或密码。
+
+Windows 可在用户明确授权后使用 CurrentUser DPAPI 私有密文；每次连接依次验证 profile、主机 pin 和当前凭据。密文缺失、身份变化或认证拒绝时停止，不回退旧密码。网络/代理或监控问题按 [接入诊断](references/tianhe-access-recovery.md) 分层处理，不关闭校验或改变其他网络设置。
 
 ## Start every run
+
+Cloudflare or Alibaba Cloud account, domain, DNS, ICP, or OPC-only tasks follow
+the matching provider branch without selecting or probing an unrelated SSH target. For the Tianhe
+password route above, follow its reference instead of
+the ordinary PEM init/targets/onboarding sequence below. Do not treat its absence
+from the PEM registry as a missing connection or overwrite other targets.
 
 1. Resolve this skill directory. If the user supplied an exact self-describing
    PEM path, run `python scripts/yunctl.py import-pem PATH`; never search for it.
@@ -73,6 +79,10 @@ bundle validation, and an isolated `import-pem` all pass. An unbundled generated
 PEM is only a key; a validated self-describing PEM is the portable connection.
 
 ## Compute branch
+
+### 天河超算 / DFT
+
+Use the selected Tianhe references for aTrust, site scheduling, bounded source releases and result verification. The password-session helper only offers read-only preflight/queue actions; use a separately authorized, verified site-specific submission controller for writes. The registered PEM adapter supports a checksum-gated site submission. A project node budget is not the scheduler's universal quota; verify active allocations and pending-job limits each time. Do not run scientific compute on the login node.
 
 For Linux only, read [references/compute.md](references/compute.md), then use `yunctl.py` for the
 submit → status/logs → fetch or cancel → cleanup lifecycle.
@@ -126,18 +136,27 @@ has recovered from SSH reachability alone.
 Complete a mutation only after verifying the requested outcome. For deployment
 or configuration work, preserve and identify a tested rollback path.
 
-## Cloudflare DNS branch
+## Alibaba Cloud branch
 
-Read [references/cloudflare.md](references/cloudflare.md). For a one-off subdomain
-on an existing locally managed Cloudflare Tunnel, prefer the manual dashboard CNAME
-workflow; reserve `scripts/yun_cloudflare.py` for repeated automation or when the
-user explicitly requests API-based DNS control. Keep any token outside the Skill
-and let only the adapter receive it through a hidden local prompt or decrypt it
-in-process.
+For Alibaba Cloud domain/DNS/ICP work and OPC package workflows, read
+[references/aliyun.md](references/aliyun.md). Use the official authorized
+service and the exact requested account and domain. Prefer the configured
+Alibaba Domain MCP; the bundled read-only helper is the current-session fallback.
+Preserve existing servers, DNS records, and workloads. Purchasing a new cloud
+resource is a separate financial action, never implied by DNS setup.
 
-Plan DNS changes before applying them. Require explicit user authority for the
-exact record, independently verify public DNS and HTTPS after an apply, and
-retain the prior record value as the rollback path.
+## Cloudflare branch
+
+Read [references/cloudflare.md](references/cloudflare.md). Prefer the authorized
+Cloudflare official MCP connection for the requested account operations, and
+consult the installed official Cloudflare plugin skill relevant to the product.
+Keep the existing token adapter and dashboard workflow as fallbacks; an OAuth
+connection does not require an API token in chat.
+
+Plan DNS changes for the user-authorized outcome, inspect the exact current
+record and authority, and retain a rollback path. Independently verify public
+DNS and HTTPS after an apply. Do not ask again when the user has already
+authorized the intended outcome and the target is unambiguous.
 
 ## Authority and safety
 
@@ -152,8 +171,9 @@ retain the prior record value as the rollback path.
   passphrases, populated `.env` files, API keys, cloud tokens, or secret-manager
   values. Let only `yunctl.py bundle-pem` stream a key locally into a restricted,
   validated candidate for atomic in-place replacement. Let only the bundled
-  Cloudflare adapter accept a token through a hidden prompt and decrypt it
-  locally in-process; it must never emit the value.
+  Cloudflare adapter accept an API token through a hidden prompt and decrypt it
+  locally in-process; it must never emit the value. OAuth credentials are managed
+  by Codex and Cloudflare; do not inspect, extract, or copy them.
 - Never put secrets in command arguments, submitted scripts, logs, target
   metadata, or summaries.
 - Preserve unrelated workloads. Inspect identity, disk, ports, active jobs, and
